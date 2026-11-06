@@ -19,6 +19,27 @@ pub enum PageAccess {
     NoAccess,
 }
 
+/// Returns the system virtual memory page size in bytes.
+#[inline]
+pub fn system_page_size() -> usize {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+        let mut info: SYSTEM_INFO = unsafe { core::mem::zeroed() };
+        unsafe { GetSystemInfo(&mut info) };
+        info.dwPageSize as usize
+    }
+    #[cfg(unix)]
+    {
+        let sz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if sz > 0 { sz as usize } else { 4096 }
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        4096
+    }
+}
+
 /// A dedicated, page-aligned virtual memory region with hardware-enforced protection.
 ///
 /// Ensures zero-compromise security:
@@ -40,12 +61,9 @@ unsafe impl Send for ProtectedMemory {}
 unsafe impl Sync for ProtectedMemory {}
 
 impl ProtectedMemory {
-    /// System page size (standard 4096 bytes).
-    pub const PAGE_SIZE: usize = 4096;
-
     /// Allocates a new protected memory buffer of at least `len` bytes.
     ///
-    /// The buffer is initialized with zeros and has `PageAccess::ReadWrite` initially.
+    /// The buffer is page-aligned and has `PageAccess::ReadWrite` initially.
     pub fn allocate(len: usize) -> Result<Self, SafetyError> {
         if len == 0 {
             return Err(SafetyError::Violation(
@@ -53,8 +71,11 @@ impl ProtectedMemory {
             ));
         }
 
-        // Round up to multiple of PAGE_SIZE
-        let aligned_len = (len + Self::PAGE_SIZE - 1) & !(Self::PAGE_SIZE - 1);
+        let page_size = system_page_size();
+        let aligned_len = len
+            .checked_add(page_size - 1)
+            .map(|sum| sum & !(page_size - 1))
+            .ok_or_else(|| SafetyError::Violation("Allocation size arithmetic overflow".into()))?;
 
         let ptr: *mut u8;
 
@@ -94,11 +115,6 @@ impl ProtectedMemory {
                 }
                 ptr = mem.cast();
             }
-        }
-
-        // Initialize allocated page with zero
-        unsafe {
-            core::ptr::write_bytes(ptr, 0, aligned_len);
         }
 
         Ok(Self {
@@ -202,25 +218,49 @@ impl ProtectedMemory {
 
     /// Seals the memory buffer as `ReadOnly` for the lifetime of a RAII guard.
     ///
-    /// When the guard is dropped, the memory is automatically restored to `ReadWrite`.
+    /// When the guard is dropped, the memory is automatically restored to its previous access level.
     pub fn seal_guard(&mut self) -> Result<ReadOnlyGuard<'_>, SafetyError> {
+        let prev = self.access;
         self.protect(PageAccess::ReadOnly)?;
-        Ok(ReadOnlyGuard { mem: self })
+        Ok(ReadOnlyGuard {
+            mem: self,
+            previous_access: prev,
+        })
     }
 }
 
 impl Drop for ProtectedMemory {
     fn drop(&mut self) {
-        // Unseal back to ReadWrite if needed so we can scrub the secrets
-        if self.access != PageAccess::ReadWrite {
-            let _ = self.protect(PageAccess::ReadWrite);
-        }
+        // Unseal back to ReadWrite if needed so we can safely scrub secrets.
+        // If unsealing fails, we skip scrubbing to prevent uncatchable 0xC0000005 access violation.
+        let can_scrub = if self.access != PageAccess::ReadWrite {
+            self.protect(PageAccess::ReadWrite).is_ok()
+        } else {
+            true
+        };
 
-        // Scrub memory via volatile writes
-        unsafe {
-            for i in 0..self.aligned_len {
-                core::ptr::write_volatile(self.ptr.add(i), 0);
+        if can_scrub {
+            // Memory barrier before volatile writes
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+            // Fast word-aligned clearing followed by remainder bytes
+            unsafe {
+                let word_size = core::mem::size_of::<usize>();
+                let aligned_words = self.aligned_len / word_size;
+                let word_ptr = self.ptr.cast::<usize>();
+
+                for i in 0..aligned_words {
+                    core::ptr::write_volatile(word_ptr.add(i), 0);
+                }
+
+                let remaining_start = aligned_words * word_size;
+                for i in remaining_start..self.aligned_len {
+                    core::ptr::write_volatile(self.ptr.add(i), 0);
+                }
             }
+
+            // Memory barrier after volatile writes
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
 
         #[cfg(windows)]
@@ -242,6 +282,7 @@ impl Drop for ProtectedMemory {
 /// RAII guard sealing a `ProtectedMemory` buffer as `ReadOnly`.
 pub struct ReadOnlyGuard<'a> {
     mem: &'a mut ProtectedMemory,
+    previous_access: PageAccess,
 }
 
 impl<'a> ReadOnlyGuard<'a> {
@@ -254,7 +295,7 @@ impl<'a> ReadOnlyGuard<'a> {
 
 impl<'a> Drop for ReadOnlyGuard<'a> {
     fn drop(&mut self) {
-        let _ = self.mem.protect(PageAccess::ReadWrite);
+        let _ = self.mem.protect(self.previous_access);
     }
 }
 
@@ -301,22 +342,32 @@ mod tests {
     }
 
     #[test]
-    fn test_seal_guard_raii() {
+    fn test_seal_guard_restores_previous_state() {
         let mut mem = ProtectedMemory::allocate(32).expect("allocation should succeed");
         {
             let slice = mem.as_mut_slice().unwrap();
             slice[0] = 42;
         }
 
+        // Test restore to ReadWrite
         {
             let guard = mem.seal_guard().expect("guard creation succeeds");
             assert_eq!(guard.as_slice()[0], 42);
         }
-
-        // Guard dropped, should be ReadWrite again
         assert_eq!(mem.access(), PageAccess::ReadWrite);
-        let slice = mem.as_mut_slice().unwrap();
-        slice[0] = 99;
-        assert_eq!(slice[0], 99);
+
+        // Test restore to NoAccess
+        mem.protect(PageAccess::NoAccess).unwrap();
+        {
+            let guard = mem.seal_guard().expect("guard creation from NoAccess");
+            assert_eq!(guard.as_slice()[0], 42);
+        }
+        assert_eq!(mem.access(), PageAccess::NoAccess);
+    }
+
+    #[test]
+    fn test_overflow_protection() {
+        let res = ProtectedMemory::allocate(usize::MAX);
+        assert!(res.is_err());
     }
 }

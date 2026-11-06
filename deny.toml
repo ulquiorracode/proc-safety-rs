@@ -27,4 +27,4 @@ highlight = "all"
 [sources]
 unknown-registry = "warn"
 unknown-git = "warn"
-allow-git = []
+allow-git = ["https://github.com/ulquiorracode/stitch-rs.git"]

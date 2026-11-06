@@ -27,6 +27,35 @@ mod tests {
     }
 
     #[test]
+    fn test_fail_fast_cross_platform_policy() {
+        #[cfg(windows)]
+        {
+            // disable_core_dumps is unix-only
+            let strict_builder = ProcessSafety::builder().disable_core_dumps();
+            assert!(matches!(
+                strict_builder.commit(),
+                Err(SafetyError::UnsupportedPlatform)
+            ));
+
+            let best_effort_builder = ProcessSafety::builder()
+                .disable_core_dumps()
+                .best_effort(true);
+            assert!(best_effort_builder.commit().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_null_thread_handle_rejection() {
+        #[cfg(windows)]
+        {
+            unsafe {
+                let res = os::windows::hide_thread(core::ptr::null_mut());
+                assert!(matches!(res, Err(SafetyError::Violation(_))));
+            }
+        }
+    }
+
+    #[test]
     fn test_individual_mitigations() {
         #[cfg(windows)]
         {

@@ -97,6 +97,12 @@ pub fn enforce_strict_handle_checks() -> Result<(), SafetyError> {
 ///
 /// `thread` must be a valid OS thread handle with `THREAD_SET_INFORMATION` access rights.
 pub unsafe fn hide_thread(thread: HANDLE) -> Result<(), SafetyError> {
+    if thread.is_null() {
+        return Err(SafetyError::Violation(
+            "Thread handle cannot be null".into(),
+        ));
+    }
+
     // Dynamically link NtSetInformationThread from ntdll.dll
     type NtSetInformationThreadFn = unsafe extern "system" fn(
         thread_handle: HANDLE,
