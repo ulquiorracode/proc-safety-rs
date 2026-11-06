@@ -17,13 +17,28 @@ mod tests {
 
     #[test]
     fn test_process_safety_builder_compiles_and_commits() {
+        #[cfg(windows)]
         let builder = ProcessSafety::builder()
             .strict_handle_checks()
             .hide_current_thread();
 
-        // Should commit without panic
+        #[cfg(unix)]
+        let builder = ProcessSafety::builder().disable_core_dumps();
+
+        // Should commit without panic on native host
         let result = builder.commit();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_process_safety_builder_best_effort() {
+        let builder = ProcessSafety::builder()
+            .strict_handle_checks()
+            .hide_current_thread()
+            .disable_core_dumps()
+            .best_effort(true);
+
+        assert!(builder.commit().is_ok());
     }
 
     #[test]
@@ -39,6 +54,21 @@ mod tests {
 
             let best_effort_builder = ProcessSafety::builder()
                 .disable_core_dumps()
+                .best_effort(true);
+            assert!(best_effort_builder.commit().is_ok());
+        }
+
+        #[cfg(unix)]
+        {
+            // Windows policies are rejected on Unix when best_effort is false
+            let strict_builder = ProcessSafety::builder().strict_handle_checks();
+            assert!(matches!(
+                strict_builder.commit(),
+                Err(SafetyError::UnsupportedPlatform)
+            ));
+
+            let best_effort_builder = ProcessSafety::builder()
+                .strict_handle_checks()
                 .best_effort(true);
             assert!(best_effort_builder.commit().is_ok());
         }
@@ -78,6 +108,13 @@ mod tests {
             println!("block_unsigned_binaries 1: {:?}", sign_res);
             let sign_res2 = os::windows::enforce_block_unsigned_binaries();
             println!("block_unsigned_binaries 2: {:?}", sign_res2);
+        }
+
+        #[cfg(unix)]
+        {
+            let dump_res = os::unix::enforce_disable_dumpable();
+            println!("enforce_disable_dumpable: {:?}", dump_res);
+            assert!(dump_res.is_ok());
         }
     }
 }
