@@ -1,4 +1,5 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use core::hint::black_box;
+use criterion::{Criterion, criterion_group, criterion_main};
 use proc_safety::stitch_support::ProcSafetyMiddleware;
 use proc_safety::{PageAccess, ProtectedMemory};
 
