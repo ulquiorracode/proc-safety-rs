@@ -153,6 +153,9 @@ pub unsafe fn protect_memory_range(
     len: usize,
     new_protect: PAGE_PROTECTION_FLAGS,
 ) -> Result<PAGE_PROTECTION_FLAGS, SafetyError> {
+    if (ptr as usize).checked_add(len).is_none() {
+        return Err(SafetyError::InvalidBufferRange);
+    }
     let mut old_protect = 0;
     let ret = unsafe { VirtualProtect(ptr.cast(), len, new_protect, &mut old_protect) };
     if ret == 0 {

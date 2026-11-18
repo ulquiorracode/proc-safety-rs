@@ -117,4 +117,47 @@ mod tests {
             assert!(dump_res.is_ok());
         }
     }
+
+    #[test]
+    fn test_protect_memory_range_overflow_rejection() {
+        #[cfg(windows)]
+        {
+            unsafe {
+                let bad_ptr = (usize::MAX - 64) as *mut u8;
+                let res = os::windows::protect_memory_range(
+                    bad_ptr,
+                    128,
+                    windows_sys::Win32::System::Memory::PAGE_READONLY,
+                );
+                assert!(matches!(res, Err(SafetyError::InvalidBufferRange)));
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            unsafe {
+                let bad_ptr = (usize::MAX - 64) as *mut u8;
+                let res = os::unix::protect_memory_range(bad_ptr, 128, libc::PROT_READ);
+                assert!(matches!(res, Err(SafetyError::InvalidBufferRange)));
+            }
+        }
+    }
+
+    #[cfg(feature = "stitch")]
+    #[test]
+    fn test_proc_safety_middleware_stitch_layer() {
+        use stitch_core::flow::FlowControl;
+        use stitch_core::middleware::Layer;
+
+        let middleware = ProcSafetyMiddleware;
+        let mut ctx = ();
+        let intent = 42;
+        let flow: FlowControl<i32, (), ()> =
+            Layer::<(), i32, (), ()>::on_enter(&middleware, &mut ctx, intent);
+        assert!(matches!(flow, FlowControl::Proceed(42)));
+
+        let mut outcome: Result<i32, ()> = Ok(100);
+        Layer::<(), i32, i32, ()>::on_exit(&middleware, &mut ctx, &mut outcome);
+        assert_eq!(outcome, Ok(100));
+    }
 }

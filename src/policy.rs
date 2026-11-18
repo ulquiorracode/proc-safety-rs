@@ -88,19 +88,31 @@ impl ProcessSafetyBuilder {
             }
 
             if self.prohibit_dynamic_code {
-                os::windows::enforce_prohibit_dynamic_code()?;
+                let res = os::windows::enforce_prohibit_dynamic_code();
+                if !self.best_effort {
+                    res?;
+                }
             }
 
             if self.block_unsigned_binaries {
-                os::windows::enforce_block_unsigned_binaries()?;
+                let res = os::windows::enforce_block_unsigned_binaries();
+                if !self.best_effort {
+                    res?;
+                }
             }
 
             if self.strict_handle_checks {
-                os::windows::enforce_strict_handle_checks()?;
+                let res = os::windows::enforce_strict_handle_checks();
+                if !self.best_effort {
+                    res?;
+                }
             }
 
             if self.hide_current_thread {
-                os::windows::hide_current_thread()?;
+                let res = os::windows::hide_current_thread();
+                if !self.best_effort {
+                    res?;
+                }
             }
         }
 
@@ -116,7 +128,10 @@ impl ProcessSafetyBuilder {
             }
 
             if self.disable_core_dumps {
-                os::unix::enforce_disable_dumpable()?;
+                let res = os::unix::enforce_disable_dumpable();
+                if !self.best_effort {
+                    res?;
+                }
             }
         }
 
