@@ -2,7 +2,7 @@
 
 > **Zero-cost, internal process self-defense, memory boundaries, and OS kernel mitigation policies for native Rust processes.**
 
-`proc-safety-rs` hardens running processes directly from the inside without requiring external containers, hypervisors, or heavyweight virtualization. It interfaces directly with OS kernel mitigations (Windows Process Mitigations and Linux `prctl`/`seccomp`) and provides zero-overhead memory protection barriers.
+`proc-safety-rs` hardens running processes directly from the inside without requiring external containers, hypervisors, or heavyweight virtualization. It interfaces directly with OS kernel mitigations (Windows Process Mitigations and Linux `prctl` dumpable restrictions) and provides zero-overhead memory protection barriers.
 
 ## Capabilities
 
@@ -10,8 +10,8 @@
 - **DLL Injection Wall**: Blocks unsigned module loading via Windows `SignaturePolicy` (`Microsoft-signed only`).
 - **Dynamic Code Prevention**: Enforces hardware W^X (Write XOR Execute) to prohibit executable page allocations in heaps/stacks.
 - **Thread Camouflage**: Hides sensitive game, networking, or crypto threads from user-mode debuggers (`ThreadHideFromDebugger`).
-- **Memory Boundaries**: Locks critical pages into `PAGE_READONLY` or arms tripwire detection via `PAGE_GUARD`.
-- **Ecosystem Glue**: Seamlessly integrates into `stitch-rs` pipelines, providing defensive SMA middlewares for `modtree` and `statefs`.
+- **Memory Boundaries**: Locks critical pages into `PAGE_READONLY` or `PAGE_NOACCESS` with automatic volatile zeroing and scrubbing on drop.
+- **Ecosystem Glue**: Seamlessly integrates into `stitch-rs` pipelines, providing defensive SMA middlewares implementing the `Layer` trait.
 
 ## Quick Start
 

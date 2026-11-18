@@ -17,6 +17,9 @@ pub enum SafetyError {
     #[error("operation not supported on target platform")]
     UnsupportedPlatform,
 
+    #[error("invalid memory buffer range: calculation overflow")]
+    InvalidBufferRange,
+
     #[error("safety policy violation: {0}")]
     Violation(String),
 }

@@ -2,6 +2,8 @@
 
 #[cfg(feature = "stitch")]
 use stitch_core::flow::FlowControl;
+#[cfg(feature = "stitch")]
+use stitch_core::middleware::Layer;
 
 /// Zero-cost U-cycle safety guard middleware for `stitch-rs`.
 ///
@@ -11,19 +13,16 @@ use stitch_core::flow::FlowControl;
 pub struct ProcSafetyMiddleware;
 
 #[cfg(feature = "stitch")]
-impl ProcSafetyMiddleware {
+impl<TCtx, TIntent, TOutcome, TErr> Layer<TCtx, TIntent, TOutcome, TErr> for ProcSafetyMiddleware {
     /// Executed on downward phase (before entering plugin or command).
     #[inline(always)]
-    pub fn on_enter<TIntent, TOutcome, E>(
-        &self,
-        intent: TIntent,
-    ) -> FlowControl<TIntent, TOutcome, E> {
+    fn on_enter(&self, _ctx: &mut TCtx, intent: TIntent) -> FlowControl<TIntent, TOutcome, TErr> {
         FlowControl::Proceed(intent)
     }
 
     /// Executed on upward phase (after plugin or command exits).
     #[inline(always)]
-    pub fn on_exit<TOutcome>(&self, outcome: TOutcome) -> TOutcome {
-        outcome
+    fn on_exit(&self, _ctx: &mut TCtx, _outcome: &mut Result<TOutcome, TErr>) {
+        // Upward phase: total function contract.
     }
 }

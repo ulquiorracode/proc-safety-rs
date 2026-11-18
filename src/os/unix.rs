@@ -35,11 +35,23 @@ pub unsafe fn protect_memory_range(
         return Ok(());
     }
 
-    let page_size = crate::mem::system_page_size();
     let addr = ptr as usize;
+    if addr.checked_add(len).is_none() {
+        return Err(SafetyError::InvalidBufferRange);
+    }
+
+    let page_size = crate::mem::system_page_size();
     let page_start = addr & !(page_size - 1);
     let page_offset = addr - page_start;
-    let aligned_len = (len + page_offset + page_size - 1) & !(page_size - 1);
+    let total_len = len
+        .checked_add(page_offset)
+        .and_then(|l| l.checked_add(page_size - 1))
+        .ok_or(SafetyError::InvalidBufferRange)?;
+    let aligned_len = total_len & !(page_size - 1);
+
+    if page_start.checked_add(aligned_len).is_none() {
+        return Err(SafetyError::InvalidBufferRange);
+    }
 
     let ret = unsafe { libc::mprotect(page_start as *mut _, aligned_len, prot) };
     if ret != 0 {
